@@ -182,8 +182,6 @@ std::vector<GaussianState> preprocessGaussians(
             means3D[3 * idx + 2]
         };
 
-		// viewmatrix 代表 世界坐标 → 相机坐标，原文没直接求，封装在 in_frustum 里了
-        glm::vec3 p_view = transformPoint4x3(mean, viewmatrix);
 		// projmatrix 代表 透视投影
         glm::vec4 p_hom = transformPoint4x4(mean, projmatrix);
 
@@ -194,6 +192,8 @@ std::vector<GaussianState> preprocessGaussians(
             p_hom.z * inv_w
         };
 
+        // viewmatrix 代表 世界坐标 → 相机坐标，原文没直接求，封装在 in_frustum 里了
+        glm::vec3 p_view = transformPoint4x3(mean, viewmatrix);
         // Corresponds to in_frustum / near culling
         if (p_view.z <= 0.2f) {
             states[idx] = state;
@@ -298,4 +298,150 @@ std::vector<GaussianState> preprocessGaussians(
     }
 
     return states;
+}
+
+// 对应原函数
+// template <uint32_t CHANNELS>
+// __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
+// renderCUDA
+
+int rasterize_gaussians_cpu(
+    int P,
+    const float* means3D,
+    const float* scales,
+    float scale_modifier,
+    const float* rotations,
+    const float* opacities,
+    const float* shs,
+    int sh_degree,
+    const float* colors_precomp,
+    const float* cov3D_precomp,
+    const float* viewmatrix,
+    const float* projmatrix,
+    const float* cam_pos,
+    float tan_fovx,
+    float tan_fovy,
+    int W,
+    int H,
+    const float* background,
+    float* out_color,
+    float* out_invdepth)
+{
+    // 先把每个 3D Gaussian，预处理成“后面真正 rasterize 时够用的 2D 屏幕信息”，也就是把原始输入里的：means3D，scales，rotations，opacities，colors_precomp，viewmatrix / projmatrix
+    // 先变成每个高斯的一份中间结果 GaussianState，里面包括：
+    // depth：这个高斯中心在相机前方多远，mean2D：这个高斯投影到屏幕后的中心，conic：2D 椭圆的逆协方差参数，opacity：透明度，color：颜色，radius：这个高斯在屏幕上的近似影响半径，visible：是否值得进入后续渲染
+    std::vector<GaussianState> states = preprocessGaussians(
+        P,
+        means3D,
+        scales,
+        scale_modifier,
+        rotations,
+        opacities,
+        shs,
+        sh_degree,
+        colors_precomp,
+        cov3D_precomp,
+        viewmatrix,
+        projmatrix,
+        cam_pos,
+        tan_fovx,
+        tan_fovy,
+        W,
+        H
+    );
+
+    // 从全部高斯 states 里，筛出“预处理后仍然可见/有效”的那些高斯，单独放进一个列表里
+    std::vector<const GaussianState*> visible_states;
+    // .reserve 先预留容量，最多可能放 P 个，这是性能优化，避免反复扩容
+    visible_states.reserve(P);
+    for (const auto& state : states) 
+    {
+        // “visible”不只是“在视锥里”，还包括：near cull 没被剔掉，协方差可逆，半径有效，没提前被判成无效
+        if (state.visible)
+            visible_states.push_back(&state);
+    }
+
+    // Simplified CPU substitute for tile-local sorted point lists
+    std::sort
+    (
+        visible_states.begin(),
+        visible_states.end(),
+        [](const GaussianState* a, const GaussianState* b) 
+        {
+            return a->depth < b->depth;
+        }
+    );
+
+    // 双重for循环，遍历一张图像的所有像素点
+    for (int y = 0; y < H; ++y)
+    {
+        for (int x = 0; x < W; ++x)
+        {
+            int pix_id = y * W + x;
+            float px = static_cast<float>(x);
+            float py = static_cast<float>(y);
+
+            float T = 1.0f;
+            float C[3] = {0.0f, 0.0f, 0.0f};
+            float expected_invdepth = 0.0f;
+
+            // 只遍历那些已经通过预处理筛选、当前相机下可能有贡献的高斯椭球（遍历 states 里的每一个 GaussianState，当前这个元素我叫它 state）
+            for (const GaussianState* state_ptr : visible_states)
+            {
+                const GaussianState& state = *state_ptr;
+
+                // 如果2D高斯到像素点的距离大于高斯的半径，不用算这个高斯对当前像素的影响
+                if (std::abs(state.mean2D[0] - px) > state.radius ||
+                    std::abs(state.mean2D[1] - py) > state.radius) 
+                    continue;
+
+                // CPU port of renderCUDA power computation (forward.cu lines 382-387)
+                float dx = state.mean2D[0] - px;
+                float dy = state.mean2D[1] - py;
+                // 原文：float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+                // 如果一个 2D 高斯是圆的，-0.5*( dx^2 + dy^2 )，但是现在是旋转过的椭圆，所以得用 -0.5*(x-\mu)^T \Sigma^{-1} (x-\mu) )，x-\mu即为{dx,dy}，\Sigma^{-1} 即为 conic
+                float power = -0.5f * (
+                    state.conic[0] * dx * dx +
+                    state.conic[2] * dy * dy
+                ) - state.conic[1] * dx * dy;
+
+                // 理论上一个合法高斯里，这个二次型不会让 power > 0
+                if (power > 0.0f)
+                    continue;
+
+                // 刚刚算出来了 -0.5*(x-\mu)^T \Sigma^{-1} (x-\mu) )，现在算 e^{...}，opacity：高斯自带的基础不透明度参数，alpha：高斯对当前像素的最终有效不透明度
+                float alpha = std::min(0.99f, state.opacity * std::exp(power));
+                if (alpha < 1.0f / 255.0f)
+                    continue;
+
+                // 1-alpha 算还能透过去多少
+                float test_T = T * (1.0f - alpha);
+
+                // 算颜色
+                for (int ch = 0; ch < 3; ++ch)
+                    C[ch] += state.color[ch] * alpha * T;
+
+                // CPU port of renderCUDA inverse depth accumulation (forward.cu lines 407-408)
+                // state.depth 是这个 Gaussian 中心在相机空间里的深度，然后这里根据 alpha-blending 求逆深度
+                if (out_invdepth != nullptr)
+                    expected_invdepth += (1.0f / state.depth) * alpha * T;
+
+                T = test_T;
+
+                if (T < 0.0001f)
+                    break;
+            }
+
+            // CPU equivalent of final writeback (forward.cu lines 420-429)
+            // 0 * H * W + pix_id 的原因是，假如一张图 W = 4，H = 3，那么RGB三通道总共有36个像素，然后前12全存R，中12全存G，后12全存B
+            out_color[0 * H * W + pix_id] = C[0] + T * background[0];
+            out_color[1 * H * W + pix_id] = C[1] + T * background[1];
+            out_color[2 * H * W + pix_id] = C[2] + T * background[2];
+
+            if (out_invdepth != nullptr)
+                out_invdepth[pix_id] = expected_invdepth;
+        }
+    }
+    // 返回这次渲染里，最终参与后续 rasterization 的可见高斯数量
+    return static_cast<int>(visible_states.size());
 }
