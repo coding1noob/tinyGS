@@ -305,7 +305,7 @@ std::vector<GaussianState> preprocessGaussians(
 // __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 // renderCUDA
 
-int rasterize_gaussians_cpu(
+int renderCPU(
     int P,
     const float* means3D,
     const float* scales,
