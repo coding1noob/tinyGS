@@ -1,7 +1,8 @@
 #include "rasterize_points.h"
 
 // 当这个扩展模块被 Python 成功 import 之后，它里面会有一个函数叫 render_cpu
-PYBIND11_MODULE(tiny_gaussian_rasterization, m) 
+// 这里和3dgs不同，因为编译出来的子模块名就是_C
+PYBIND11_MODULE(_C, m) 
 {
     m.def("render_cpu", &RenderCPUFromNumpy,
           py::arg("means3D"),
