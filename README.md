@@ -1,3 +1,5 @@
+# 只依托 python, C++ 完成渲染
+
 一开始只有main.cpp，CMakeLists.txt，tgaimage.cpp，tgaimage.h
 
 然后新建了submodules/tiny-gaussian-rasterization里面的东西
@@ -36,11 +38,23 @@
         最后 3dgs_note/submodules/diff-gaussian-rasterization/diff_gaussian_rasterization/__init__.py   
         import 上面的扩展并包装它。通过 ext.cpp 的定义，来调用 rasterize_points.cu 里面的函数
 
+    写完之后从顶层来看调用链条就是：
+        demo.py
+        -> from tiny_gaussian_rasterization import render_cpu
+        -> tiny_gaussian_rasterization/__init__.py
+        -> from . import _C
+        -> _C.render_cpu(...)
+        -> RenderCPUFromNumpy(...)
+        -> renderCPU(...)
+        -> out_color
+
+
 第五步写完之后测试闭环：
 
     submodules/tiny-gaussian-rasterization/
     目录下编译扩展：
     python setup.py build_ext --inplace
+        (目前用的是上面这句而不是 pip install )
         上面这句话为本地开发测试，先把扩展编出来让我当前目录能 import      
         build_ext：只构建扩展；      -inplace：把编译结果直接放在源码包目录附近，而不是只放进临时 build 目录
         然后就能生成.so文件在tiny_gaussian_rasterization

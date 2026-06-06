@@ -68,6 +68,7 @@ def main():
 
     background = np.array([0.0, 0.0, 0.0], dtype=np.float32)
 
+    # out_color 里面其实已经是整张图了
     visible, out_color = render_cpu(
     means3D=means3D,
     scales=scales,
@@ -94,6 +95,17 @@ def main():
     print("out_color.dtype =", out_color.dtype)
     print("out_color.min =", out_color.min())
     print("out_color.max =", out_color.max())
+
+    # 因为你 C++ 输出的 out_color 形状是：(3, H, W)，但大多数 Python 图像库想要的是：(H, W, 3)
+    img = np.transpose(out_color, (1, 2, 0))
+    # 限制范围在 0.0 到 1.0 之间
+    img = np.clip(img, 0.0, 1.0)
+    img = (img * 255).astype(np.uint8)
+
+    import imageio.v2 as imageio
+    imageio.imwrite("output.png", img)
+    print("saved output.png")
+
 
 # 只有这个 .py 文件被直接运行时，条件才为真；如果只是被别的 Python 文件 import，就不会执行这块代码
 if __name__ == "__main__":
