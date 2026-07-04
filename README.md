@@ -63,3 +63,33 @@
 
     然后（当然如果执行的是 python -m pip install -e . 就不用前面的路径）：
     PYTHONPATH=submodules/tiny-gaussian-rasterization python demo.py
+
+最终效果是构建了 submodules/tiny-gaussian-rasterization 以及最外层的 demo.py
+
+# 依托 python, CUDA 完成渲染
+
+先把整个链条写完跑通一个 1+1
+
+先看 diff_gaussian_rasterization 文件夹里面的 __init__.py 里面的 GaussianRasterizer 类，仿照其写出 自己的 __init__.py，
+然后再看 ext.cpp，rasterize_points.cu，setup.py
+
+# 配置环境
+
+conda create -n tinygs python=3.12 -y
+
+conda activate tinygs
+
+python -m pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu130
+
+python -m pip install numpy pybind11 imageio -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+之后 
+
+cd submodules/diff-gaussian-rasterization
+rm -rf build diff_gaussian_rasterization/_C*.so
+python -m pip install -e . --no-build-isolation
+
+# 比较CUDA加速
+
+python demo2.py 
+即可
