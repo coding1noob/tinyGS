@@ -1,3 +1,6 @@
+# 负责把上面这些源码（原文是rasterize_points.cu、ext.cpp、cuda_rasterizer/forward.cu、
+# cuda_rasterizer/backward.cu等等这些）编译成 Python 能 import 的扩展模块
+
 from setuptools import setup
 from torch.utils.cpp_extension import CUDAExtension, BuildExtension
 import os

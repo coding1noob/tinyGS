@@ -73,7 +73,7 @@
 先看 diff_gaussian_rasterization 文件夹里面的 __init__.py 里面的 GaussianRasterizer 类，仿照其写出 自己的 __init__.py，
 然后再看 ext.cpp，rasterize_points.cu，setup.py
 
-# 配置环境
+## 配置环境
 
 conda create -n tinygs python=3.12 -y
 
@@ -89,7 +89,9 @@ cd submodules/diff-gaussian-rasterization
 rm -rf build diff_gaussian_rasterization/_C*.so
 python -m pip install -e . --no-build-isolation
 
-# 比较CUDA加速
+## 比较CUDA加速
 
 python demo2.py 
-即可
+即可完成 1+1 
+
+## 开始着手高斯前向渲染

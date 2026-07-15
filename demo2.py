@@ -1,7 +1,7 @@
 import time
 import torch
 
-from gaussian_renderer import renderTest
+from gaussian_renderer import MultiplyTest
 
 if __name__ == "__main__":
     N = 1 << 25
@@ -9,7 +9,7 @@ if __name__ == "__main__":
     # CUDA 计时
     torch.cuda.synchronize()
     t0 = time.time()
-    cuda_result = renderTest()
+    cuda_result = MultiplyTest()
     torch.cuda.synchronize()
     t1 = time.time()
 
